@@ -1,0 +1,121 @@
+version: "3.7"
+
+services:
+  traefik:
+    image: traefik:latest
+    container_name: traefik
+    hostname: traefik
+    restart: always
+    env_file:
+      - .env
+    networks:
+      proxy:
+         ipv4_address: 172.100.10.10  
+      #- metric
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./systeme/traefik_data/traefik.toml:/etc/traefik/traefik.toml
+      - ./systeme/traefik_data/acme.json:/acme.json
+      - ./systeme/traefik_data/configurations:/configurations
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      - "traefik.http.routers.traefik-secure.entrypoints=websecure"
+      - "traefik.http.routers.traefik-secure.rule=Host(`traefik.${DOMAIN_NAME}`)"
+      - "traefik.http.routers.traefik-secure.service=api@internal"
+      - "traefik.http.routers.traefik-secure.middlewares=user-auth@file"
+    
+  portainer:
+    image: portainer/portainer-ce:sts
+    container_name: portainer
+    hostname: portainer 
+    networks:
+      proxy:
+          ipv4_address: 172.100.10.20 
+    restart: always
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./systeme/portainer_data:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      - "traefik.http.routers.portainer-secure.entrypoints=websecure"
+      - "traefik.http.routers.portainer-secure.rule=Host(`portainer.${DOMAIN_NAME}`)"
+      - "traefik.http.routers.portainer-secure.service=portainer"
+      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+
+  frontend:
+    image: frontend:latest
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: frontend
+    hostname: frontend
+    networks: 
+      proxy:
+          ipv4_address: 172.100.10.100
+    restart: always
+    depends_on:
+      - backend
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./app/src:/app/src
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.frontend-secure.entrypoints=websecure
+      - traefik.http.routers.frontend-secure.rule=Host(`www.${DOMAIN_NAME}`)
+      - traefik.http.routers.frontend-secure.service=frontend
+      - traefik.http.services.frontend.loadbalancer.server.port=3000
+    
+  backend:
+    image: backend:latest
+    container_name: backend
+    hostname: backend
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    depends_on:
+      - db
+    networks:
+      proxy:
+          ipv4_address: 172.100.10.110
+    restart: always
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./api/src:/api/src
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      # userdb: ${POSTGRES_USER}
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.backend-secure.entrypoints=websecure
+      - traefik.http.routers.backend-secure.rule=Host(`api.${DOMAIN_NAME}`)
+      - traefik.http.routers.backend-secure.service=backend
+      - traefik.http.services.backend.loadbalancer.server.port=3000
+
+  db:
+    image: postgres:latest
+    container_name: db
+    hostname: db
+    networks:
+      proxy:
+          ipv4_address: 172.100.10.120
+    restart: always
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./db/data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+
+networks:
+  proxy:
+    ipam:
+      driver: default 
+      config:
+        - subnet: "172.100.10.0/24"
